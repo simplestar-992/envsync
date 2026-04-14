@@ -1,0 +1,121 @@
+#!/usr/bin/env lua
+-- GlobEnv CLI
+-- Global environment variable management tool
+
+package.path = package.path .. ";" .. arg[0]:match("(.-)[^/]+$") .. "?.lua"
+local genv = require("globenv")
+
+local function print_help()
+    print("GlobEnv - Global Environment Variable Manager")
+    print("")
+    print("Usage:")
+    print("  globenv parse <file>          Parse .env file")
+    print("  globenv diff <file1> <file2>  Compare two env files")
+    print("  globenv merge <base> <overlay> <output>")
+    print("  globenv export <file>         Export to JSON")
+    print("  globenv generate <name>       Generate template .env")
+    print("")
+end
+
+local function main()
+    local args = arg
+    if #args < 2 then
+        print_help()
+        os.exit(1)
+    end
+    
+    local command = args[1]
+    
+    if command == "parse" then
+        local env, err = genv.parse_env_file(args[2])
+        if not env then
+            print("Error: " .. err)
+            os.exit(1)
+        end
+        
+        print("Parsed " .. #env .. " variables:")
+        for k, v in pairs(env) do
+            local display = genv.is_sensitive(k) and genv.mask_value(v) or v
+            print("  " .. k .. "=" .. display)
+        end
+        
+    elseif command == "diff" then
+        local env1, err1 = genv.parse_env_file(args[2])
+        local env2, err2 = genv.parse_env_file(args[3])
+        
+        if not env1 then print("Error: " .. err1); os.exit(1) end
+        if not env2 then print("Error: " .. err2); os.exit(1) end
+        
+        local diff = genv.diff_env(env1, env2)
+        
+        if next(diff.only_in_first) then
+            print("Only in " .. args[2] .. ":")
+            for k, v in pairs(diff.only_in_first) do
+                print("  + " .. k)
+            end
+        end
+        
+        if next(diff.only_in_second) then
+            print("Only in " .. args[3] .. ":")
+            for k, v in pairs(diff.only_in_second) do
+                print("  - " .. k)
+            end
+        end
+        
+        if next(diff.different) then
+            print("Different values:")
+            for k, v in pairs(diff.different) do
+                print("  ~ " .. k)
+                print("    " .. args[2] .. ": " .. v.old)
+                print("    " .. args[3] .. ": " .. v.new)
+            end
+        end
+        
+        if not next(diff.only_in_first) and not next(diff.only_in_second) and not next(diff.different) then
+            print("No differences found")
+        end
+        
+    elseif command == "export" then
+        local env, err = genv.parse_env_file(args[2])
+        if not env then
+            print("Error: " .. err)
+            os.exit(1)
+        end
+        print(genv.export_json(env))
+        
+    elseif command == "merge" then
+        local base, err1 = genv.parse_env_file(args[2])
+        local overlay, err2 = genv.parse_env_file(args[3])
+        
+        if not base then print("Error: " .. err1); os.exit(1) end
+        if not overlay then print("Error: " .. err2); os.exit(1) end
+        
+        local merged = genv.merge_env(base, overlay)
+        genv.write_env_file(args[4], merged)
+        print("Merged environment written to " .. args[4])
+        
+    elseif command == "generate" then
+        local template = {
+            "APP_NAME=" .. (args[2] or "myapp"),
+            "APP_ENV=development",
+            "APP_DEBUG=true",
+            "DATABASE_URL=postgresql://localhost:5432/",
+            "REDIS_URL=redis://localhost:6379",
+            "API_KEY=your_api_key_here",
+            "SECRET_KEY=your_secret_key_here",
+        }
+        
+        local file = io.open((args[2] or "app") .. ".env", "w")
+        file:write("# " .. os.date() .. "\n\n")
+        for _, line in ipairs(template) do
+            file:write(line .. "\n")
+        end
+        file:close()
+        print("Generated " .. (args[2] or "app") .. ".env")
+        
+    else
+        print_help()
+    end
+end
+
+main()
